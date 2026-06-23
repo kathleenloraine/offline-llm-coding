@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Pixel Flap</title>
+    <style>
+        /* Global styling to ensure the game looks contained */
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #3a6e49; /* Background green sky color */
+            font-family: monospace; /* Monospace font for pixel feel */
+        }
+
+        #gameCanvas {
+            /* The canvas will hold all our pixel art drawing */
+            border: 5px solid #2c4d3a; /* Darker border to frame the game world */
+            background-color: #7fc9ff; /* Light blue sky color */
+            image-rendering: pixelated; /* Essential for maintaining sharp pixels */
+        }
+
+        #scoreDisplay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ffffff;
+            font-size: 40px;
+            text-shadow: 2px 2px 0 #000000; /* Pixel drop shadow */
+            z-index: 10;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="scoreDisplay">Score: 0</div>
+    <canvas id="gameCanvas" width="400" height="500"></canvas>
+
+    <script>
+        // --- CANVAS SETUP ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+
+        // Game constants
+        const GRAVITY = 20;
+        const JUMP_VELOCITY = -15;
+        const PIPE_SPEED = 5;
+        const GAME_WIDTH = canvas.width;
+        const GAME_HEIGHT = canvas.height;
+        const GROUND_HEIGHT = 50;
+
+        // --- GAME STATE ---
+        let birdState = {
+            y: GAME_HEIGHT / 2,
+            vy: 0, // Vertical velocity
+            w: 30,  // Bird width
+            h: 30   // Bird height
+        };
+
+        let pipes = [];
+        let score = 0;
+        let isGameRunning = true;
+
+        // --- PIXEL ART COLOR PALETTE (For Consistency) ---
+        const COLORS = {
+            BIRD_HEAD: '#ffcc00', // Yellow/Orange
+            BIRD_BODY: '#ff8c00', // Darker Orange
+            PIPE: '#556b2f',     // Dark Olive Green
+            SKY: '#7fc9ff',
+            GROUND: '#9acd32'    // Lime green ground
+        };
+
+        // --- GAME OBJECTS & DRAWING FUNCTIONS (Pixel Art Focus) ---
+
+        /** 
+         * Draws the bird using blocky pixel art shapes.
+         */
+        function drawBird() {
+            ctx.save();
+            ctx.translate(birdState.w / 2, birdState.y + birdState.h); // Base point for drawing (bottom center)
+
+            // 1. Body (Main shape)
+            ctx.fillStyle = COLORS.BIRD_BODY;
+            ctx.fillRect(-15, -20, 30, 20); 
+
+            // 2. Head
+            ctx.fillStyle = COLORS.BIRD_HEAD;
+            ctx.fillRect(15, -28, 10, 10); 
+
+            // 3. Wing (Left side)
+            ctx.fillStyle = '#ffae42'; // Slightly lighter for contrast
+            ctx.fillRect(-18, -15, 10, 15); 
+
+            // 4. Eye (Small detail pixel)
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(17, -23, 2, 2);
+
+            ctx.restore();
+        }
+
+        /** 
+         * Draws the pipes for a given pipe object.
+         */
+        function drawPipe(pipe) {
+            ctx.fillStyle = COLORS.PIPE;
+            
+            // Top Pipe Segment (The actual hitbox area is defined by topHeight and gapY)
+            ctx.fillRect(pipe.x, 0, 35, pipe.topHeight);
+
+            // Bottom Pipe Segment
+            const bottomPipeStart = pipe.bottomY; // Y coordinate where the bottom pipe begins
+            const bottomPipeHeight = GAME_HEIGHT - bottomPipeStart;
+            ctx.fillRect(pipe.x, bottomPipeStart, 35, bottomPipeHeight);
+        }
+
+        /** 
+         * Draws the ground level.
+         */
+        function drawGround() {
+            ctx.fillStyle = COLORS.GROUND;
+            // Draw a solid rectangular block at the bottom
+            ctx.fillRect(0, GAME_HEIGHT - GROUND_HEIGHT, GAME_WIDTH, GROUND_HEIGHT);
+
+            // Optional: Pixelated ground line details
+            ctx.fillStyle = '#6b8e23';
+            for (let i = 0; i < GAME_WIDTH; i += 4) {
+                 ctx.fillRect(i + 1, GAME_HEIGHT - GROUND_HEIGHT + 2, 2, 5);
+            }
+
+        }
+
+
+        // --- GAME LOGIC & PHYSICS ---
+
+        /** 
+         * Handles the bird's physics and updates its position.
+         */
+        function updateBird() {
+            // Apply gravity
+            birdState.vy += GRAVITY;
+            birdState.y += birdState.vy;
+
+            // Keep the bird from falling through the ground (or into the floor area)
+            const minY = 0; // Assuming the canvas drawing starts at y=0
+            const maxAllowedY = GAME_HEIGHT - GROUND_HEIGHT - birdState.h;
+            if (birdState.y > maxAllowedY) {
+                birdState.y = maxAllowedY;
+                birdState.vy = 0;
+            }
+
+            // Optional: Limit flying too high
+            if (birdState.y < 15) {
+                 birdState.y = 15;
+                 birdState.vy = 0;
+            }
+        }
+
+
+        /** 
+         * Generates a new pair of pipes and adds them to the array.
+         */
+        function spawnPipes() {
+            // Calculate random heights, ensuring minimum gap space
+            const minHeight = 50;
+            const maxHeight = GAME_HEIGHT - GROUND_HEIGHT - minHeight;
+
+            // Top pipe height (must be between 10% and 70% of the screen)
+            let topHeight = Math.floor(Math.random() * (maxHeight - 120)) + 80; 
+            
+            // Bottom pipe height is calculated based on required gap space
+            const gapSize = 100; // Fixed gap size for consistency
+
+            let bottomY = topHeight + gapSize; 
+
+            pipes.push({
+                x: GAME_WIDTH,
+                topHeight: topHeight,
+                bottomY: bottomY,
+                scored: false
+            });
+        }
+
+        /** 
+         * Moves pipes and checks for scoring and removal.
+         */
+        function updatePipes() {
+            // Move all existing pipes left
+            pipes.forEach(pipe => {
+                pipe.x -= PIPE_SPEED;
+            });
+
+            // Remove pipes that have moved off screen
+            pipes = pipes.filter(pipe => pipe.x + 35 > 0);
+
+            // Scoring check: Check if the bird has passed a pipe and hasn't been scored yet
+            for (const pipe of pipes) {
+                if (!pipe.scored && pipe.x + 35 < birdState.w / 2) { // When right edge passes center of bird
+                    score++;
+                    document.getElementById('scoreDisplay').innerText = `Score: ${score}`;
+                    pipe.scored = true;
+                }
+            }
+
+            // Spawn new pipes periodically (Every ~150 frames or so)
+            if (Math.random() < 0.02) { // Low probability spawn rate per frame for smoothness
+                 spawnPipes();
+            }
+        }
+
+
+        /** 
+         * Checks if the bird has collided with any object.
+         */
+        function checkCollision() {
+            // 1. Ground/Ceiling Collision Check (Done in updateBird, but safety check here)
+
+            // 2. Pipe Collision Check
+            for (const pipe of pipes) {
+                // Calculate collision box for the bird:
+                // Bird X range: center - half width to center + half width
+                // Bird Y range: top edge to bottom edge
+
+                // AABB Collision logic (Axis-Aligned Bounding Box):
+                if (birdState.x < pipe.x + 35 && // Left overlap check
+                    birdState.w / 2 + 10 > pipe.x) { // Right overlap check (using relative coordinates)
+
+                    // Check collision with Top Pipe
+                    if (birdState.y - birdState.h <= pipe.topHeight) {
+                         return true;
+                    }
+                   
+                    // Check collision with Bottom Pipe
+                    const bottomPipeTop = pipe.bottomY;
+                    const bottomPipeBottom = GAME_HEIGHT - GROUND_HEIGHT;
+
+                     if (birdState.y + 20 >= bottomPipeTop && // Bird bottom hits pipe top
+                        birdState.y - 30 <= bottomPipeBottom) { // Bird top is above ground line
+                         return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /** 
+         * Main game loop function.
+         */
+        function gameLoop() {
+            if (!isGameRunning) return;
+
+            // 1. Clear the canvas (Draw sky background)
+            ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            // Re-draw the basic sky color to ensure continuity
+             ctx.fillStyle = COLORS.SKY;
+             ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT - GROUND_HEIGHT);
+
+            // 2. Update Physics
+            updateBird();
+            updatePipes();
+
+            // 3. Check Game Over Condition
+            if (checkCollision()) {
+                gameOver();
+                return;
+            }
+
+            // 4. Draw Elements
+            drawGround();
+            pipes.forEach(p => drawPipe(p));
+            drawBird();
+
+            // Request the next frame, creating the loop
+            requestAnimationFrame(gameLoop);
+        }
+
+
+        /** 
+         * Input handler: Flaps the bird up.
+         */
+        function flap() {
+            if (!isGameRunning) return;
+            birdState.vy = JUMP_VELOCITY; // Set vertical velocity immediately upward
+        }
+
+        /** 
+         * Game Over State Handler
+         */
+        function gameOver() {
+            isGameRunning = false;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '48px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText("GAME OVER!", GAME_WIDTH / 2, 150);
+            ctx.font = '30px monospace';
+            ctx.fillText(`Final Score: ${score}`, GAME_WIDTH / 2, 200);
+            ctx.fillStyle = '#ffcc00';
+            ctx.fillText("Click or Press Space to Retry", GAME_WIDTH / 2, 250);
+
+        }
+
+
+        // --- INITIALIZATION & EVENT LISTENERS ---
+
+        /** Resets all state variables and starts the game loop. */
+        function startGame() {
+            birdState = { y: GAME_HEIGHT / 2, vy: 0, w: 30, h: 30 };
+            pipes = [];
+            score = 0;
+            isGameRunning = true;
+            document.getElementById('scoreDisplay').innerText = `Score: 0`;
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event listeners for user input (Spacebar or Mouse Click)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === ' ' || e.key === 'Space') {
+                if (!isGameRunning) {
+                    startGame();
+                } else {
+                    flap();
+                }
+                e.preventDefault(); // Prevent scrolling
+            }
+        });
+
+        document.getElementById('gameCanvas').addEventListener('click', (event) => {
+             // Only start game or flap if the click happens in the canvas area
+            if (!isGameRunning && event.target.id === 'gameCanvas') {
+                startGame();
+            } else if(isGameRunning) {
+                 flap();
+            }
+        });
+
+        // Start the game when the page loads (optional: wait for user click first)
+        // To make it more user-friendly, we will let the user trigger the start.
+        gameOver(); // Initial "game over" screen shown until started
+        document.querySelector('#scoreDisplay').innerText = `Click or Press Space to Start`;
+
+    </script>
+</body>
+</html>
